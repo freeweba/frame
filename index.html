@@ -330,16 +330,15 @@
         }
 
         function initializeFirebase() {
-            return new Promise((resolve, reject) => {
+            return new Promise((resolve) => {
                 appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
                 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
 
                 if (!firebaseConfig.apiKey) {
                     authStatus.textContent = "Firebase is not configured.";
-                    return reject("Firebase config not found.");
+                    return resolve();
                 }
 
-                console.log('Initializing Firebase with Project ID:', firebaseConfig.projectId);
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
@@ -348,40 +347,34 @@
                 authStatus.textContent = "Connecting...";
 
                 const unsubscribe = onAuthStateChanged(auth, async (user) => {
-                    console.log('Firebase Auth State Changed. User:', user ? user.uid : 'null', 'Is Anonymous:', user ? user.isAnonymous : 'N/A');
-                    const uploadFrameLabel = document.getElementById('upload-frame-label');
-                    if (user && user.uid) {
+                    if (user) {
                         userId = user.uid;
                         isAuthReady = true;
                         authStatus.textContent = `Connected as: ${userId.substring(0, 8)}...`;
+                        const uploadFrameLabel = document.getElementById('upload-frame-label');
                         frameUploader.disabled = false;
                         uploadFrameLabel.classList.remove('opacity-50', 'cursor-not-allowed');
-                        unsubscribe(); // Stop listening after we get the first user
+                        unsubscribe();
                         loadPublicFrames();
                         resolve();
-                    } else {
-                        isAuthReady = false;
-                        authStatus.textContent = "Not authenticated.";
-                        userId = null;
-                        frameUploader.disabled = true;
-                        uploadFrameLabel.classList.add('opacity-50', 'cursor-not-allowed');
                     }
                 });
 
                 (async () => {
                     try {
+                        if (auth.currentUser) {
+                           console.log("User already signed in.");
+                           return;
+                        }
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await signInWithCustomToken(auth, __initial_auth_token);
                         } else {
-                            console.log("Attempting to sign in anonymously...");
                             await signInAnonymously(auth);
                         }
-                        console.log("Sign-in call completed. Current user:", auth.currentUser);
                     } catch (error) {
                         console.error("Authentication Error:", error);
                         authStatus.textContent = "Authentication failed.";
-                        unsubscribe();
-                        reject(error);
+                        resolve(); // Resolve anyway to not block the app
                     }
                 })();
             });
@@ -445,7 +438,7 @@
             reader.onload = async function(event) {
                 const frameName = file.name.length > 12 ? file.name.substring(0, 10) + '...' : file.name;
                 const frameId = 'public-' + Date.now();
-                const storagePath = `artifacts/${appId}/public/data/frames/${frameId}.png`;
+                const storagePath = `public_frames/${frameId}.png`;
                 const storageRef = ref(storage, storagePath);
 
                 setUploadButtonState(true);
@@ -457,7 +450,7 @@
                     const downloadURL = await getDownloadURL(storageRef);
 
                     // Add frame metadata to Firestore
-                    const framesCollection = collection(db, `artifacts/${appId}/public/data/frames`);
+                    const framesCollection = collection(db, `public_frames`);
                     await addDoc(framesCollection, {
                         id: frameId,
                         name: frameName,
@@ -562,7 +555,7 @@
 
         // --- Firebase Public Frames ---
         function loadPublicFrames() {
-            const framesCollection = collection(db, `artifacts/${appId}/public/data/frames`);
+            const framesCollection = collection(db, `public_frames`);
             onSnapshot(framesCollection, (snapshot) => {
                 publicFrameSelectionContainer.innerHTML = '';
                 if (snapshot.empty) {
