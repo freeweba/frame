@@ -58,6 +58,18 @@
             height: 400px;
             max-height: 70vh;
         }
+        .spinner {
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border-left-color: #fff;
+            animation: spin 1s ease infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800">
@@ -89,7 +101,10 @@
 
                 <div class="pt-4 border-t">
                     <h2 id="upload-frame-title" class="text-2xl font-semibold mb-3"></h2>
-                     <label id="upload-frame-label" for="frameUploader" class="file-input-button file-input-button-secondary opacity-50 cursor-not-allowed"></label>
+                     <label id="upload-frame-label" for="frameUploader" class="file-input-button file-input-button-secondary opacity-50 cursor-not-allowed inline-flex items-center justify-center space-x-2">
+                        <span id="upload-frame-btn-text"></span>
+                        <div id="upload-spinner" class="spinner hidden"></div>
+                     </label>
                     <input type="file" id="frameUploader" name="frameUploader" accept="image/png" class="hidden" disabled/>
                     <p id="upload-frame-subtitle" class="text-sm text-gray-500 mt-2"></p>
                 </div>
@@ -165,7 +180,7 @@
             frameSelectionContainer, canvasPlaceholder, fileNameDisplay, authStatus,
             langSwitcherBtn, cropModal, imageToCrop,
             confirmCropBtn, cancelCropBtn, zoomInBtn, zoomOutBtn, rotateLeftBtn, rotateRightBtn,
-            publicFrameSelectionContainer, noPublicFrames;
+            publicFrameSelectionContainer, noPublicFrames, uploadFrameBtnText, uploadSpinner;
 
         // App State
         let userImage = null;
@@ -174,6 +189,7 @@
         let cropper = null;
         let currentLang = 'en';
         let db, auth, storage, userId, appId;
+        let isAuthReady = false; // New flag to confirm authentication
 
         const frames = [
             { id: 'simple-circle', name: 'Circle', type: 'svg', content: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="48" fill="none" stroke="white" stroke-width="4"/></svg>` },
@@ -208,7 +224,8 @@
                 langButton: "ភាសាខ្មែរ",
                 publicFramesTitle: "Public Frames",
                 noPublicFrames: "No public frames have been uploaded yet.",
-                authError: "You are not connected to the server. Please wait for the 'Connected as...' message before uploading."
+                authError: "You are not connected to the server. Please wait for the 'Connected as...' message before uploading.",
+                uploading: "Uploading..."
             },
             km: {
                 mainTitle: "ស្ទូឌីយោ​ស៊ុម​រូបភាព​ប្រវត្តិរូប",
@@ -232,7 +249,8 @@
                 langButton: "English",
                 publicFramesTitle: "ស៊ុមសាធារណៈ",
                 noPublicFrames: "មិនទាន់មានស៊ុមសាធារណៈត្រូវបានបង្ហោះទេ។",
-                authError: "អ្នកមិនបានเชื่อมต่อទៅម៉ាស៊ីនមេទេ។ សូមរង់ចាំសារ 'បានតភ្ជាប់ជា...' មុនពេលបង្ហោះ។"
+                authError: "អ្នកមិនបានเชื่อมต่อទៅម៉ាស៊ីនមេទេ។ សូមរង់ចាំសារ 'បានតភ្ជាប់ជា...' មុនពេលបង្ហោះ។",
+                uploading: "កំពុង​បង្ហោះ..."
             }
         };
 
@@ -245,7 +263,7 @@
             document.getElementById('fileName').textContent = t.noFile;
             document.getElementById('select-frame-title').textContent = t.selectFrameTitle;
             document.getElementById('upload-frame-title').textContent = t.uploadFrameTitle;
-            document.getElementById('upload-frame-label').textContent = t.uploadFrameLabel;
+            document.getElementById('upload-frame-btn-text').textContent = t.uploadFrameLabel;
             document.getElementById('upload-frame-subtitle').textContent = t.uploadFrameSubtitle;
             document.getElementById('preview-title').textContent = t.previewTitle;
             document.getElementById('canvas-placeholder-text').textContent = t.canvasPlaceholder;
@@ -285,6 +303,8 @@
             rotateRightBtn = document.getElementById('rotateRight');
             publicFrameSelectionContainer = document.getElementById('public-frame-selection');
             noPublicFrames = document.getElementById('no-public-frames');
+            uploadFrameBtnText = document.getElementById('upload-frame-btn-text');
+            uploadSpinner = document.getElementById('upload-spinner');
             
             // SETUP EVENT LISTENERS
             langSwitcherBtn.addEventListener('click', () => {
@@ -309,53 +329,62 @@
             await initializeFirebase();
         }
 
-        async function initializeFirebase() {
-            appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        function initializeFirebase() {
+            return new Promise((resolve, reject) => {
+                appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
 
-            if (!firebaseConfig.apiKey) {
-                authStatus.textContent = "Firebase is not configured.";
-                return;
-            }
-
-            console.log('Initializing Firebase with Project ID:', firebaseConfig.projectId);
-            const app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-            storage = getStorage(app);
-            
-            authStatus.textContent = "Connecting...";
-
-            onAuthStateChanged(auth, user => {
-                console.log('Firebase Auth State Changed. User:', user ? user.uid : 'null', 'Is Anonymous:', user ? user.isAnonymous : 'N/A');
-                const uploadFrameLabel = document.getElementById('upload-frame-label');
-                if (user && user.uid) {
-                    userId = user.uid;
-                    authStatus.textContent = `Connected as: ${userId.substring(0, 8)}...`;
-                    frameUploader.disabled = false;
-                    uploadFrameLabel.classList.remove('opacity-50', 'cursor-not-allowed');
-                } else {
-                    authStatus.textContent = "Not authenticated.";
-                    userId = null;
-                    frameUploader.disabled = true;
-                    uploadFrameLabel.classList.add('opacity-50', 'cursor-not-allowed');
+                if (!firebaseConfig.apiKey) {
+                    authStatus.textContent = "Firebase is not configured.";
+                    return reject("Firebase config not found.");
                 }
+
+                console.log('Initializing Firebase with Project ID:', firebaseConfig.projectId);
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                storage = getStorage(app);
+                
+                authStatus.textContent = "Connecting...";
+
+                const unsubscribe = onAuthStateChanged(auth, async (user) => {
+                    console.log('Firebase Auth State Changed. User:', user ? user.uid : 'null', 'Is Anonymous:', user ? user.isAnonymous : 'N/A');
+                    const uploadFrameLabel = document.getElementById('upload-frame-label');
+                    if (user && user.uid) {
+                        userId = user.uid;
+                        isAuthReady = true;
+                        authStatus.textContent = `Connected as: ${userId.substring(0, 8)}...`;
+                        frameUploader.disabled = false;
+                        uploadFrameLabel.classList.remove('opacity-50', 'cursor-not-allowed');
+                        unsubscribe(); // Stop listening after we get the first user
+                        loadPublicFrames();
+                        resolve();
+                    } else {
+                        isAuthReady = false;
+                        authStatus.textContent = "Not authenticated.";
+                        userId = null;
+                        frameUploader.disabled = true;
+                        uploadFrameLabel.classList.add('opacity-50', 'cursor-not-allowed');
+                    }
+                });
+
+                (async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            console.log("Attempting to sign in anonymously...");
+                            await signInAnonymously(auth);
+                        }
+                        console.log("Sign-in call completed. Current user:", auth.currentUser);
+                    } catch (error) {
+                        console.error("Authentication Error:", error);
+                        authStatus.textContent = "Authentication failed.";
+                        unsubscribe();
+                        reject(error);
+                    }
+                })();
             });
-
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    console.log("Attempting to sign in anonymously...");
-                    await signInAnonymously(auth);
-                }
-                console.log("Sign-in call completed. Current user:", auth.currentUser);
-            } catch (error) {
-                console.error("Authentication Error:", error);
-                authStatus.textContent = "Authentication failed.";
-            }
-
-            loadPublicFrames();
         }
         
         // --- CORE UI FUNCTIONS ---
@@ -404,10 +433,10 @@
                 return;
             }
             
-            if (!userId) {
+            if (!isAuthReady) {
                 const t = translations[currentLang];
                 alert(t.authError);
-                console.warn('Upload blocked because userId is not set.');
+                console.warn('Upload blocked because authentication is not ready.');
                 e.target.value = ''; // Reset the file input
                 return;
             }
@@ -418,6 +447,8 @@
                 const frameId = 'public-' + Date.now();
                 const storagePath = `artifacts/${appId}/public/data/frames/${frameId}.png`;
                 const storageRef = ref(storage, storagePath);
+
+                setUploadButtonState(true);
 
                 try {
                     // Convert data URL to blob for upload
@@ -437,9 +468,24 @@
                 } catch (error) {
                     console.error("Error uploading public frame:", error);
                     alert("Could not upload frame.");
+                } finally {
+                    setUploadButtonState(false);
+                    e.target.value = ''; // Reset file input
                 }
             };
             reader.readAsDataURL(file);
+        }
+
+        function setUploadButtonState(isUploading) {
+            if (isUploading) {
+                uploadFrameBtnText.textContent = translations[currentLang].uploading;
+                uploadSpinner.classList.remove('hidden');
+                frameUploader.disabled = true;
+            } else {
+                uploadFrameBtnText.textContent = translations[currentLang].uploadFrameLabel;
+                uploadSpinner.classList.add('hidden');
+                frameUploader.disabled = false;
+            }
         }
 
         function addFrameToSelection(frame, container) {
