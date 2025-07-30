@@ -318,6 +318,7 @@
                 return;
             }
 
+            console.log('Initializing Firebase with Project ID:', firebaseConfig.projectId);
             const app = initializeApp(firebaseConfig);
             db = getFirestore(app);
             auth = getAuth(app);
@@ -326,6 +327,7 @@
             authStatus.textContent = "Connecting...";
 
             onAuthStateChanged(auth, user => {
+                console.log('Firebase Auth State Changed. User:', user ? user.uid : 'null', 'Is Anonymous:', user ? user.isAnonymous : 'N/A');
                 const uploadFrameLabel = document.getElementById('upload-frame-label');
                 if (user && user.uid) {
                     userId = user.uid;
@@ -344,8 +346,10 @@
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
+                    console.log("Attempting to sign in anonymously...");
                     await signInAnonymously(auth);
                 }
+                console.log("Sign-in call completed. Current user:", auth.currentUser);
             } catch (error) {
                 console.error("Authentication Error:", error);
                 authStatus.textContent = "Authentication failed.";
@@ -400,9 +404,10 @@
                 return;
             }
             
-            if (!auth.currentUser || !auth.currentUser.uid) {
+            if (!userId) {
                 const t = translations[currentLang];
                 alert(t.authError);
+                console.warn('Upload blocked because userId is not set.');
                 e.target.value = ''; // Reset the file input
                 return;
             }
