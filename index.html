@@ -89,18 +89,15 @@
 
                 <div class="pt-4 border-t">
                     <h2 id="upload-frame-title" class="text-2xl font-semibold mb-3"></h2>
-                     <label id="upload-frame-label" for="frameUploader" class="file-input-button file-input-button-secondary"></label>
-                    <input type="file" id="frameUploader" name="frameUploader" accept="image/png" class="hidden"/>
-                    <div id="save-frame-container" class="hidden mt-2">
-                        <button id="save-frame-btn" class="text-sm bg-green-600 text-white py-1 px-3 rounded-md hover:bg-green-700"></button>
-                    </div>
+                     <label id="upload-frame-label" for="frameUploader" class="file-input-button file-input-button-secondary opacity-50 cursor-not-allowed"></label>
+                    <input type="file" id="frameUploader" name="frameUploader" accept="image/png" class="hidden" disabled/>
                     <p id="upload-frame-subtitle" class="text-sm text-gray-500 mt-2"></p>
                 </div>
 
-                <div id="saved-frames-section" class="pt-4 border-t">
-                    <h2 id="saved-frames-title" class="text-2xl font-semibold mb-3"></h2>
-                    <div id="saved-frame-selection" class="grid grid-cols-2 sm:grid-cols-3 gap-4"></div>
-                    <p id="no-saved-frames" class="text-sm text-gray-500"></p>
+                <div id="public-frames-section" class="pt-4 border-t">
+                    <h2 id="public-frames-title" class="text-2xl font-semibold mb-3"></h2>
+                    <div id="public-frame-selection" class="grid grid-cols-2 sm:grid-cols-3 gap-4"></div>
+                    <p id="no-public-frames" class="text-sm text-gray-500"></p>
                 </div>
             </div>
 
@@ -117,6 +114,7 @@
                 <div class="mt-6 w-full">
                     <button id="download" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-green-700 transition-all disabled:bg-gray-400 disabled:cursor-not-allowed"></button>
                 </div>
+                 <p id="auth-status" class="text-sm text-gray-500 mt-2 text-center"></p>
             </div>
         </main>
 
@@ -155,13 +153,19 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+
         // Declare variables for DOM elements in the global scope
         let imageLoader, frameUploader, canvas, ctx, downloadBtn,
-            frameSelectionContainer, canvasPlaceholder, fileNameDisplay,
+            frameSelectionContainer, canvasPlaceholder, fileNameDisplay, authStatus,
             langSwitcherBtn, cropModal, imageToCrop,
             confirmCropBtn, cancelCropBtn, zoomInBtn, zoomOutBtn, rotateLeftBtn, rotateRightBtn,
-            saveFrameContainer, saveFrameBtn, savedFrameSelectionContainer, noSavedFrames;
+            publicFrameSelectionContainer, noPublicFrames;
 
         // App State
         let userImage = null;
@@ -169,7 +173,7 @@
         let selectedFrameElement = null;
         let cropper = null;
         let currentLang = 'en';
-        let tempUploadedFrame = null;
+        let db, auth, storage, userId, appId;
 
         const frames = [
             { id: 'simple-circle', name: 'Circle', type: 'svg', content: `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="48" fill="none" stroke="white" stroke-width="4"/></svg>` },
@@ -189,9 +193,9 @@
                 uploadLabel: "Choose an Image",
                 noFile: "No file selected.",
                 selectFrameTitle: "2. Select a Frame",
-                uploadFrameTitle: "Or Upload Your Own",
+                uploadFrameTitle: "Upload a Public Frame",
                 uploadFrameLabel: "Upload a PNG Frame",
-                uploadFrameSubtitle: "Best results with square, transparent PNGs.",
+                uploadFrameSubtitle: "Your frame will be visible to all users.",
                 previewTitle: "3. Preview & Download",
                 canvasPlaceholder: "Your image will appear here",
                 download: "Download",
@@ -202,9 +206,9 @@
                 cancel: "Cancel",
                 confirm: "Confirm Crop",
                 langButton: "ភាសាខ្មែរ",
-                savedFramesTitle: "Your Saved Frames",
-                noSavedFrames: "You have no saved frames.",
-                saveFrame: "Save Frame"
+                publicFramesTitle: "Public Frames",
+                noPublicFrames: "No public frames have been uploaded yet.",
+                authError: "You are not connected to the server. Please wait for the 'Connected as...' message before uploading."
             },
             km: {
                 mainTitle: "ស្ទូឌីយោ​ស៊ុម​រូបភាព​ប្រវត្តិរូប",
@@ -213,9 +217,9 @@
                 uploadLabel: "ជ្រើសរើសរូបភាព",
                 noFile: "មិនមានឯកសារត្រូវបានជ្រើសរើសទេ។",
                 selectFrameTitle: "២. ជ្រើសរើសស៊ុម",
-                uploadFrameTitle: "ឬបង្ហោះដោយខ្លួនឯង",
+                uploadFrameTitle: "បង្ហោះស៊ុមសាធារណៈ",
                 uploadFrameLabel: "បង្ហោះស៊ុម PNG",
-                uploadFrameSubtitle: "លទ្ធផលល្អបំផុតជាមួយ PNGs ការ៉េថ្លា។",
+                uploadFrameSubtitle: "ស៊ុមរបស់អ្នកនឹងអាចមើលឃើញដោយអ្នកប្រើប្រាស់ទាំងអស់។",
                 previewTitle: "៣. មើលជាមុន & ទាញយក",
                 canvasPlaceholder: "រូបភាពរបស់អ្នកនឹងបង្ហាញនៅទីនេះ",
                 download: "ទាញយក",
@@ -226,9 +230,9 @@
                 cancel: "បោះបង់",
                 confirm: "បញ្ជាក់ការកាត់",
                 langButton: "English",
-                savedFramesTitle: "ស៊ុមដែលបានរក្សាទុករបស់អ្នក",
-                noSavedFrames: "អ្នកមិនមានស៊ុមដែលបានរក្សាទុកទេ។",
-                saveFrame: "រក្សាទុកស៊ុម"
+                publicFramesTitle: "ស៊ុមសាធារណៈ",
+                noPublicFrames: "មិនទាន់មានស៊ុមសាធារណៈត្រូវបានបង្ហោះទេ។",
+                authError: "អ្នកមិនបានเชื่อมต่อទៅម៉ាស៊ីនមេទេ។ សូមរង់ចាំសារ 'បានតភ្ជាប់ជា...' មុនពេលបង្ហោះ។"
             }
         };
 
@@ -253,69 +257,10 @@
             document.getElementById('cancelCrop').textContent = t.cancel;
             document.getElementById('confirmCrop').textContent = t.confirm;
             langSwitcherBtn.textContent = t.langButton;
-            document.getElementById('saved-frames-title').textContent = t.savedFramesTitle;
-            document.getElementById('no-saved-frames').textContent = t.noSavedFrames;
-            document.getElementById('save-frame-btn').textContent = t.saveFrame;
+            document.getElementById('public-frames-title').textContent = t.publicFramesTitle;
+            document.getElementById('no-public-frames').textContent = t.noPublicFrames;
             currentLang = lang;
         }
-
-        // --- IndexedDB Database Helper ---
-        const dbHelper = {
-            db: null,
-            init() {
-                return new Promise((resolve, reject) => {
-                    const request = indexedDB.open('FrameStudioDB', 1);
-                    request.onerror = (event) => {
-                        console.error("IndexedDB error:", event.target.error);
-                        reject("Database error");
-                    };
-                    request.onsuccess = (event) => {
-                        this.db = event.target.result;
-                        resolve();
-                    };
-                    request.onupgradeneeded = (event) => {
-                        const db = event.target.result;
-                        db.createObjectStore('savedFrames', { keyPath: 'id' });
-                    };
-                });
-            },
-            addFrame(frame) {
-                return new Promise((resolve, reject) => {
-                    const transaction = this.db.transaction(['savedFrames'], 'readwrite');
-                    const store = transaction.objectStore('savedFrames');
-                    const request = store.add(frame);
-                    request.onsuccess = () => resolve();
-                    request.onerror = (event) => {
-                        console.error("Error adding frame:", event.target.error);
-                        reject("Could not add frame.");
-                    };
-                });
-            },
-            getFrames() {
-                return new Promise((resolve, reject) => {
-                    const transaction = this.db.transaction(['savedFrames'], 'readonly');
-                    const store = transaction.objectStore('savedFrames');
-                    const request = store.getAll();
-                    request.onsuccess = () => resolve(request.result);
-                    request.onerror = (event) => {
-                        console.error("Error getting frames:", event.target.error);
-                        reject("Could not retrieve frames.");
-                    };
-                });
-            },
-            deleteFrame(frameId) {
-                return new Promise((resolve, reject) => {
-                    const transaction = this.db.transaction(['savedFrames'], 'readwrite');
-                    const store = transaction.objectStore('savedFrames');
-                    const request = store.delete(frameId);
-                    request.onsuccess = () => resolve();
-                    request.onerror = (event) => {
-                        console.error("Error deleting frame:", event.target.error);
-                        reject("Could not delete frame.");
-                    };
-                });
-            }
-        };
         
         // --- INITIALIZATION ---
         async function initialize() {
@@ -328,6 +273,7 @@
             frameSelectionContainer = document.getElementById('frame-selection');
             canvasPlaceholder = document.getElementById('canvas-placeholder');
             fileNameDisplay = document.getElementById('fileName');
+            authStatus = document.getElementById('auth-status');
             langSwitcherBtn = document.getElementById('lang-switcher');
             cropModal = document.getElementById('cropModal');
             imageToCrop = document.getElementById('imageToCrop');
@@ -337,10 +283,8 @@
             zoomOutBtn = document.getElementById('zoomOut');
             rotateLeftBtn = document.getElementById('rotateLeft');
             rotateRightBtn = document.getElementById('rotateRight');
-            saveFrameContainer = document.getElementById('save-frame-container');
-            saveFrameBtn = document.getElementById('save-frame-btn');
-            savedFrameSelectionContainer = document.getElementById('saved-frame-selection');
-            noSavedFrames = document.getElementById('no-saved-frames');
+            publicFrameSelectionContainer = document.getElementById('public-frame-selection');
+            noPublicFrames = document.getElementById('no-public-frames');
             
             // SETUP EVENT LISTENERS
             langSwitcherBtn.addEventListener('click', () => {
@@ -352,17 +296,62 @@
             downloadBtn.addEventListener('click', downloadImage);
             confirmCropBtn.addEventListener('click', applyCrop);
             cancelCropBtn.addEventListener('click', hideCropModal);
-            saveFrameBtn.addEventListener('click', saveCustomFrame);
             zoomInBtn.addEventListener('click', () => cropper && cropper.zoom(0.1));
             zoomOutBtn.addEventListener('click', () => cropper && cropper.zoom(-0.1));
             rotateLeftBtn.addEventListener('click', () => cropper && cropper.rotate(-45));
             rotateRightBtn.addEventListener('click', () => cropper && cropper.rotate(45));
 
-            await dbHelper.init();
             frames.forEach(frame => addFrameToSelection(frame, frameSelectionContainer));
-            loadSavedFrames();
             updateActionButtonsState();
             switchLanguage('km'); // Set default language to Khmer
+            
+            // Initialize Firebase
+            await initializeFirebase();
+        }
+
+        async function initializeFirebase() {
+            appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+
+            if (!firebaseConfig.apiKey) {
+                authStatus.textContent = "Firebase is not configured.";
+                return;
+            }
+
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            storage = getStorage(app);
+            
+            authStatus.textContent = "Connecting...";
+
+            onAuthStateChanged(auth, user => {
+                const uploadFrameLabel = document.getElementById('upload-frame-label');
+                if (user && user.uid) {
+                    userId = user.uid;
+                    authStatus.textContent = `Connected as: ${userId.substring(0, 8)}...`;
+                    frameUploader.disabled = false;
+                    uploadFrameLabel.classList.remove('opacity-50', 'cursor-not-allowed');
+                } else {
+                    authStatus.textContent = "Not authenticated.";
+                    userId = null;
+                    frameUploader.disabled = true;
+                    uploadFrameLabel.classList.add('opacity-50', 'cursor-not-allowed');
+                }
+            });
+
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Authentication Error:", error);
+                authStatus.textContent = "Authentication failed.";
+            }
+
+            loadPublicFrames();
         }
         
         // --- CORE UI FUNCTIONS ---
@@ -405,21 +394,50 @@
 
         function handleFrameUpload(e) {
             const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = function(event) {
-                tempUploadedFrame = { 
-                    id: 'custom-' + Date.now(), 
-                    name: file.name.length > 12 ? file.name.substring(0, 10) + '...' : file.name, 
-                    type: 'png', 
-                    content: event.target.result 
-                };
-                saveFrameContainer.classList.remove('hidden');
+            
+            if (!file) {
+                e.target.value = '';
+                return;
             }
+            
+            if (!auth.currentUser || !auth.currentUser.uid) {
+                const t = translations[currentLang];
+                alert(t.authError);
+                e.target.value = ''; // Reset the file input
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = async function(event) {
+                const frameName = file.name.length > 12 ? file.name.substring(0, 10) + '...' : file.name;
+                const frameId = 'public-' + Date.now();
+                const storagePath = `artifacts/${appId}/public/data/frames/${frameId}.png`;
+                const storageRef = ref(storage, storagePath);
+
+                try {
+                    // Convert data URL to blob for upload
+                    const blob = await (await fetch(event.target.result)).blob();
+                    await uploadBytes(storageRef, blob);
+                    const downloadURL = await getDownloadURL(storageRef);
+
+                    // Add frame metadata to Firestore
+                    const framesCollection = collection(db, `artifacts/${appId}/public/data/frames`);
+                    await addDoc(framesCollection, {
+                        id: frameId,
+                        name: frameName,
+                        type: 'png',
+                        content: downloadURL,
+                        createdAt: serverTimestamp()
+                    });
+                } catch (error) {
+                    console.error("Error uploading public frame:", error);
+                    alert("Could not upload frame.");
+                }
+            };
             reader.readAsDataURL(file);
         }
 
-        function addFrameToSelection(frame, container, isSaved = false) {
+        function addFrameToSelection(frame, container) {
             const frameDiv = document.createElement('div');
             frameDiv.className = 'frame-item group relative aspect-square bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden border-2 border-gray-300';
             frameDiv.dataset.frameId = frame.id;
@@ -440,17 +458,6 @@
                 framePreview.crossOrigin = "Anonymous";
                 framePreview.className = 'absolute inset-0 w-full h-full';
                 frameDiv.appendChild(framePreview);
-            }
-            
-            if (isSaved) {
-                const deleteButton = document.createElement('button');
-                deleteButton.innerHTML = '&times;';
-                deleteButton.className = 'absolute top-1 right-1 bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center font-bold opacity-0 group-hover:opacity-100 transition-opacity z-10';
-                deleteButton.onclick = (e) => {
-                    e.stopPropagation();
-                    deleteSavedFrame(frame.id);
-                };
-                frameDiv.appendChild(deleteButton);
             }
 
             frameDiv.addEventListener('click', () => selectFrame(frame, frameDiv));
@@ -502,44 +509,20 @@
             link.click();
         }
 
-        // --- IndexedDB FUNCTIONS ---
-        async function saveCustomFrame() {
-            if (!tempUploadedFrame) return;
-            try {
-                await dbHelper.addFrame(tempUploadedFrame);
-                await loadSavedFrames();
-                saveFrameContainer.classList.add('hidden');
-                // Select the newly saved frame
-                const newFrameElement = document.querySelector(`#saved-frame-selection [data-frame-id="${tempUploadedFrame.id}"]`);
-                if (newFrameElement) {
-                    selectFrame(tempUploadedFrame, newFrameElement);
+        // --- Firebase Public Frames ---
+        function loadPublicFrames() {
+            const framesCollection = collection(db, `artifacts/${appId}/public/data/frames`);
+            onSnapshot(framesCollection, (snapshot) => {
+                publicFrameSelectionContainer.innerHTML = '';
+                if (snapshot.empty) {
+                    noPublicFrames.classList.remove('hidden');
+                    return;
                 }
-                tempUploadedFrame = null;
-            } catch (error) {
-                alert(error);
-            }
-        }
-
-        async function loadSavedFrames() {
-            savedFrameSelectionContainer.innerHTML = '';
-            const savedFrames = await dbHelper.getFrames();
-            if (savedFrames.length > 0) {
-                noSavedFrames.classList.add('hidden');
-                savedFrames.forEach(frame => {
-                    addFrameToSelection(frame, savedFrameSelectionContainer, true);
+                noPublicFrames.classList.add('hidden');
+                snapshot.docs.forEach(doc => {
+                    addFrameToSelection(doc.data(), publicFrameSelectionContainer);
                 });
-            } else {
-                noSavedFrames.classList.remove('hidden');
-            }
-        }
-
-        async function deleteSavedFrame(frameId) {
-            try {
-                await dbHelper.deleteFrame(frameId);
-                await loadSavedFrames();
-            } catch (error) {
-                alert(error);
-            }
+            });
         }
         
         window.onload = initialize;
